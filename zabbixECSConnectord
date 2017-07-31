@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+import sys
+import json
+import time
+import logging
+from ZabbixECSConnector import AWSECS, Zabbix
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+logger.addHandler(ch)
+
+with open('config.json') as config_file:
+    Config = json.load(config_file)
+
+try:
+    Config['Zabbix']
+    Config['frequency']
+    Config['AWSAccounts']
+    Config['cluster2proxy']
+except Exception as e:
+    logger.error("Invalid config file {}".format(e))
+    sys.exit(1)
+
+logger.info("Starting up ...")
+while True:
+    aws = AWSECS(Config)
+    payload = aws.discover_instances()
+
+    zabbix = Zabbix(payload, Config)
+
+    zabbix.run()
+    time.sleep(int(Config['frequency']))

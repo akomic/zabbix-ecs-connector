@@ -1,0 +1,26 @@
+{
+    "Zabbix": {
+        "url": "https://zabbix.foo.bar",
+        "user": "apiUser",
+        "pass": "apiPass",
+        "instanceTemplate": "Template OS Linux ECS Instance"
+    },
+    "frequency": "300",
+    "AWSAccounts": {
+        "dev": {
+            "region": "us-east-1",
+            "key": "XYC",
+            "secret": "xyc"
+        },
+        "prod": {
+            "region": "us-east-1",
+            "key": "ABC",
+            "secret": "abc"
+        }
+    },
+    "cluster2proxy": {
+        "devCluster": "zabbix-proxy-dev",
+        "prodCluster": "zabbix-proxy-production"
+    },
+    "groupTags": ["Environment"]
+}
