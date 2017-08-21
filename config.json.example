@@ -3,7 +3,10 @@
         "url": "https://zabbix.foo.bar",
         "user": "apiUser",
         "pass": "apiPass",
-        "instanceTemplate": "Template OS Linux ECS Instance"
+        "instanceTemplates": [
+            "Template OS Linux ECS Instance",
+            "Template Docker Instance"
+        ]
     },
     "frequency": "300",
     "AWSAccounts": {
