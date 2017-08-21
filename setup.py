@@ -7,7 +7,7 @@ setup(
     name="zabbix-ecs-connector",
 
     # Version number (initial):
-    version="0.0.2",
+    version="0.0.3",
 
     # Application author details:
     author="Alen Komic",
@@ -21,6 +21,7 @@ setup(
 
     # Include additional files into the package
     include_package_data=True,
+    package_data={'': ['']},
 
     # Details
     url="https://github.com/akomic/zabbix-ecs-connector",
