@@ -3,3 +3,5 @@ config.json
 **/*~
 **/__pycache__
 **/examples
+dist
+zabbix_ecs_connector.egg-info

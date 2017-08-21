@@ -1,3 +1,4 @@
+import sys
 import time
 import logging
 
@@ -20,9 +21,17 @@ class Zabbix(object):
         self.instanceTemplates = []
 
         self.log = logging.getLogger(__name__)
-        self.log.setLevel(logging.WARNING)
+        self.log.setLevel(logging.DEBUG)
         ch = logging.StreamHandler()
         self.log.addHandler(ch)
+
+        self.stats = {
+            'created_hosts': 0,
+            'deleted_hosts': 0,
+            'created_groups': 0,
+            'clusters': 0,
+            'running_instances': 0
+        }
 
         self.zapi = self.api_connect()
 
@@ -35,8 +44,8 @@ class Zabbix(object):
                 zapi.timeout = 5
                 zapi.login(self.Config['Zabbix']['user'],
                            self.Config['Zabbix']['pass'])
-                self.log.info("Connected to Zabbix API Version %s" %
-                              zapi.api_version())
+                self.log.debug("Connected to Zabbix API Version %s" %
+                               zapi.api_version())
                 return zapi
             except Exception as e:
                 self.log.warning("ERROR connecting to Zabbix API: {0}".
@@ -59,10 +68,11 @@ class Zabbix(object):
         self.data['templates'] = self.zapi.template.get(output='extend')
         self.instanceTemplates = [
             {'templateid': t['templateid']} for t in self.data['templates']
-            if t['host'] == self.Config['Zabbix']['instanceTemplate']
+            if t['host'] in self.Config['Zabbix']['instanceTemplates']
         ]
 
     def housekeeping(self):
+        self.get_state()
         if 'hosts' in self.data:
             for host in self.data['hosts']:
                 memberOfGroups = [g['name'] for g in host['groups']]
@@ -70,9 +80,10 @@ class Zabbix(object):
                     continue
 
                 if host['host'] not in self.runningInstances:
-                    self.log.info("Deleting host {}".format(host['host']))
+                    self.log.debug("Deleting host {}".format(host['host']))
                     try:
                         self.zapi.host.delete(host['hostid'])
+                        self.stats['deleted_hosts'] += 1
                     except Exception as e:
                         self.log.warning("ERROR deleting host: {} {}".
                                          format(host['host'], e))
@@ -88,7 +99,7 @@ class Zabbix(object):
     def create_group(self, groupName):
         groupid = self.group_exists(groupName)
         if not groupid:
-            self.log.info("Creating group {}".format(groupName))
+            self.log.debug("Creating group {}".format(groupName))
             try:
                 resp = self.zapi.hostgroup.create(name=groupName)
             except Exception as e:
@@ -96,13 +107,14 @@ class Zabbix(object):
                                  format(groupName, e))
                 return {}
             else:
-                self.log.info("Created group {}".format(groupName))
+                self.log.debug("Created group {}".format(groupName))
                 self.data['groups'].append({
                     "groupid": resp['groupids'][0],
                     "name": groupName,
                     "internal": "0",
                     "flags": "0"
                 })
+                self.stats['created_groups'] += 1
                 return {'groupid': resp['groupids'][0]}
         else:
             return {'groupid': groupid}
@@ -117,10 +129,13 @@ class Zabbix(object):
         return groupIds
 
     def host_exists(self, ec2InstanceId):
-        return any(h['host'] == ec2InstanceId for h in self.data['hosts'])
+        matching_hosts = [h['hostid'] for h in self.data['hosts']
+                          if h['host'] == ec2InstanceId]
+        return matching_hosts[0] if len(matching_hosts) > 0 else None
 
     def create_proxied_instance(self, ec2InstanceId, instance, proxyId):
-        if not self.host_exists(ec2InstanceId):
+        hostID = self.host_exists(ec2InstanceId)
+        if hostID is None:
             try:
                 self.zapi.host.create(
                     host=ec2InstanceId,
@@ -142,19 +157,40 @@ class Zabbix(object):
             else:
                 groups = [g['groupid']
                           for g in self.instanceGroups[ec2InstanceId]]
-                self.log.info("Created proxied host {}"
-                              " groups: {}"
-                              " proxyid: {}"
-                              " ip: {}".format(
-                                  ec2InstanceId,
-                                  ','.join(groups),
-                                  proxyId,
-                                  instance['PrivateIpAddress']
-                              )
-                              )
+                self.log.debug("Created proxied host {}"
+                               " groups: {}"
+                               " proxyid: {}"
+                               " ip: {}".format(
+                                   ec2InstanceId,
+                                   ','.join(groups),
+                                   proxyId,
+                                   instance['PrivateIpAddress']
+                               ))
+                self.stats['created_hosts'] += 1
+        else:
+            try:
+                self.zapi.host.update(
+                    hostid=hostID,
+                    groups=self.instanceGroups[ec2InstanceId],
+                    templates=self.instanceTemplates
+                )
+            except Exception as e:
+                self.log.warning("ERROR updating host: {} {}".
+                                 format(ec2InstanceId, e))
+            else:
+                groups = [g['groupid']
+                          for g in self.instanceGroups[ec2InstanceId]]
+                self.log.debug("Updated host {}"
+                               " groups: {}"
+                               " ip: {}".format(
+                                   ec2InstanceId,
+                                   ','.join(groups),
+                                   instance['PrivateIpAddress']
+                               ))
 
     def create_instance(self, ec2InstanceId, instance):
-        if not self.host_exists(ec2InstanceId):
+        hostID = self.host_exists(ec2InstanceId)
+        if hostID is None:
             try:
                 self.zapi.host.create(
                     host=ec2InstanceId,
@@ -175,20 +211,42 @@ class Zabbix(object):
             else:
                 groups = [g['groupid']
                           for g in self.instanceGroups[ec2InstanceId]]
-                self.log.info("Created host {}"
-                              " groups: {}"
-                              " ip: {}".format(
-                                  ec2InstanceId,
-                                  ','.join(groups),
-                                  instance['PrivateIpAddress']
-                              )
-                              )
+                self.log.debug("Created host {}"
+                               " groups: {}"
+                               " ip: {}".format(
+                                   ec2InstanceId,
+                                   ','.join(groups),
+                                   instance['PrivateIpAddress']
+                               ))
+                self.stats['created_hosts'] += 1
+        else:
+            try:
+                self.zapi.host.update(
+                    hostid=hostID,
+                    groups=self.instanceGroups[ec2InstanceId],
+                    templates=self.instanceTemplates
+                )
+            except Exception as e:
+                self.log.warning("ERROR updating host: {} {}".
+                                 format(ec2InstanceId, e))
+            else:
+                groups = [g['groupid']
+                          for g in self.instanceGroups[ec2InstanceId]]
+                self.log.debug("Updated host {}"
+                               " groups: {}"
+                               " ip: {}".format(
+                                   ec2InstanceId,
+                                   ','.join(groups),
+                                   instance['PrivateIpAddress']
+                               ))
 
     def run(self):
         self.get_state()
         for accountName, account in self.payload.items():
             for clusterArn, cluster in account.items():
+                self.stats['clusters'] += 1
                 for ec2InstanceId, instance in cluster['instances'].items():
+                    self.stats['running_instances'] += 1
                     self.runningInstances.append(ec2InstanceId)
                     self.instanceGroups[ec2InstanceId] = self.create_groups(
                         instance['Groups'])
@@ -199,5 +257,5 @@ class Zabbix(object):
                     else:
                         self.create_instance(ec2InstanceId, instance)
 
-        self.get_state()
+        self.log.info("{}".format(self.stats))
         self.housekeeping()
